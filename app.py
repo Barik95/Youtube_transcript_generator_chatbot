@@ -1,16 +1,40 @@
+# ──────────────────────────────────────────────────────────────
+#  app.py  –  Streamlit YouTube-Transcript Downloader + Chatbot
+# ──────────────────────────────────────────────────────────────
+import os
 import streamlit as st
 from datetime import date
 from urllib.parse import urlparse, parse_qs
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+from youtube_transcript_api import (
+    YouTubeTranscriptApi,
+    TranscriptsDisabled,
+    NoTranscriptFound,
+)
 from supabase import create_client, Client, AuthApiError
 import openai
-from config import SUPABASE_URL, SUPABASE_KEY, OPENAI_KEY
 
-# ── init clients ─────────────────────────────────────
+# ╭─────────────────── Load secrets safely ───────────────────╮
+try:  # 🖥 LOCAL - uses ignored config.py
+    from config import SUPABASE_URL, SUPABASE_KEY, OPENAI_KEY
+except ModuleNotFoundError:  # ☁ Cloud - uses Secrets / env-vars
+    SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL"))
+    SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY"))
+    OPENAI_KEY   = st.secrets.get("OPENAI_KEY",   os.getenv("OPENAI_KEY"))
+
+missing = [n for n, v in {
+    "SUPABASE_URL": SUPABASE_URL,
+    "SUPABASE_KEY": SUPABASE_KEY,
+    "OPENAI_KEY":   OPENAI_KEY,
+}.items() if not v]
+if missing:
+    raise RuntimeError(f"Missing secrets: {', '.join(missing)}")
+# ╰────────────────────────────────────────────────────────────╯
+
+# ─── Initialise clients ──────────────────────────────────────
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-oa = openai.OpenAI(api_key=OPENAI_KEY)            # OpenAI SDK ≥1.0
+oa = openai.OpenAI(api_key=OPENAI_KEY)  # OpenAI SDK ≥ 1.0
 
-# ── helpers ──────────────────────────────────────────
+# ─── Helper functions ────────────────────────────────────────
 def youtube_id(url: str):
     q = urlparse(url)
     if q.hostname == "youtu.be":
@@ -20,10 +44,12 @@ def youtube_id(url: str):
     return None
 
 def yt_transcript(vid: str):
-    try: return YouTubeTranscriptApi.get_transcript(vid)
-    except (TranscriptsDisabled, NoTranscriptFound): return None
+    try:
+        return YouTubeTranscriptApi.get_transcript(vid)
+    except (TranscriptsDisabled, NoTranscriptFound):
+        return None
 
-def save_transcript(vid: str, tr):
+def save_transcript(vid: str, tr: list[dict]):
     supabase.table("youtube_transcripts").insert(
         dict(
             video_id=vid,
@@ -33,42 +59,42 @@ def save_transcript(vid: str, tr):
         )
     ).execute()
 
-def profile(uid):
+def profile(uid: str):
     return (supabase.table("user_profile")
             .select("*").eq("id", uid).single().execute()).data
 
-def bump_counter(uid):
+def bump_counter(uid: str):
     today = str(date.today())
     supabase.table("user_profile").update(
         dict(daily_chat_count=1, last_chat_date=today)
     ).eq("id", uid).execute()
 
-# ── login / sign-up ──────────────────────────────────
+# ─── Login / Sign-up UI ──────────────────────────────────────
 if "user" not in st.session_state:
-    tab_l, tab_s = st.tabs(["Login", "Sign-up"])
+    tab_login, tab_signup = st.tabs(["Login", "Sign-up"])
 
-    with tab_l:
-        e = st.text_input("Email")
-        p = st.text_input("Password", type="password")
+    with tab_login:
+        email = st.text_input("Email")
+        pw    = st.text_input("Password", type="password")
         if st.button("Login"):
             try:
                 st.session_state.user = supabase.auth.sign_in_with_password(
-                    dict(email=e, password=p)
+                    dict(email=email, password=pw)
                 ).user
                 st.rerun()
             except AuthApiError as err:
                 st.error(err.message)
 
-    with tab_s:
-        n = st.text_input("Full name")
-        e2= st.text_input("Email (sign-up)")
-        p2= st.text_input("Password", type="password")
+    with tab_signup:
+        fullname = st.text_input("Full name")
+        email_s  = st.text_input("Email (sign-up)")
+        pw_s     = st.text_input("Password", type="password")
         if st.button("Create account"):
             supabase.auth.sign_up(
-                dict(email=e2, password=p2,
-                     options={"data": {"full_name": n}})
+                dict(email=email_s, password=pw_s,
+                     options={"data": {"full_name": fullname}})
             )
-            st.success("Check email to confirm address.\nWait for admin approval.")
+            st.success("Check your inbox to confirm e-mail.\nWait for admin approval.")
     st.stop()
 
 user = st.session_state.user
@@ -77,16 +103,16 @@ if not prof or not prof["approved"]:
     st.warning("⏳  Awaiting admin approval…")
     st.stop()
 
-# ── main app ─────────────────────────────────────────
-mode = st.sidebar.radio("Mode", ("Downloader", "Chatbot"))
+# ─── Main app ────────────────────────────────────────────────
 st.title("📺  YouTube Transcript App")
+mode = st.sidebar.radio("Mode", ("Downloader", "Chatbot"))
 
-# Downloader
+# ▼ Downloader ────────────────────────────────────────────────
 if mode == "Downloader":
     st.header("📥  Download transcripts")
-    txt = st.text_area("YouTube links (one per line)")
+    links_text = st.text_area("YouTube links (one per line)")
     if st.button("Fetch"):
-        for link in [l.strip() for l in txt.splitlines() if l.strip()]:
+        for link in [l.strip() for l in links_text.splitlines() if l.strip()]:
             vid = youtube_id(link)
             if not vid:
                 st.error(f"{link} → invalid"); continue
@@ -97,15 +123,15 @@ if mode == "Downloader":
             else:
                 st.warning(f"{link} → no transcript")
 
-# Chatbot
+# ▼ Chatbot ───────────────────────────────────────────────────
 else:
     if not prof["can_chat"]:
         st.info("🚫  Chatbot not enabled for your account.")
         st.stop()
 
-    # daily quota ≤2
+    # daily quota ≤ 2
     if prof["last_chat_date"] == str(date.today()) and prof["daily_chat_count"] >= 2:
-        st.warning("Daily quota (2 Qs) reached. Come back tomorrow.")
+        st.warning("Daily quota (2 questions) reached. Come back tomorrow.")
         st.stop()
 
     rows = supabase.table("youtube_transcripts").select("video_id", "title").execute().data
@@ -116,7 +142,7 @@ else:
         "Choose a video",
         [f"{r['title']} ({r['video_id']})" for r in rows]
     )
-    vid = label.split("(")[-1][:-1]              # extract id
+    vid = label.split("(")[-1][:-1]  # extract id
 
     question = st.text_input("Ask your question")
     if question:
@@ -130,8 +156,8 @@ else:
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "Use only the transcript."},
-                    {"role": "user",   "content": prompt}
-                ]
+                    {"role": "user", "content": prompt},
+                ],
             )
             ans = res.choices[0].message.content
             st.chat_message("user").write(question)
@@ -139,3 +165,4 @@ else:
             bump_counter(user.id)
         except Exception as e:
             st.error(e)
+
