@@ -1,6 +1,5 @@
-pip freeze > requirements.txt
-# or hand-write minimal lines:
+# requirements.txt
 streamlit
-supabase
 openai
+supabase
 youtube-transcript-api
