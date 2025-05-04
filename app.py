@@ -14,9 +14,9 @@ from supabase import create_client, Client, AuthApiError
 import openai
 
 # ╭──────────── Load secrets (local or Cloud) ─────────────╮
-try:  # LOCAL: use ignored config.py
+try:                                     # LOCAL (uses ignored config.py)
     from config import SUPABASE_URL, SUPABASE_KEY, OPENAI_KEY
-except ModuleNotFoundError:  # DEPLOYED: use Streamlit Secrets / env-vars
+except ModuleNotFoundError:              # DEPLOYED (uses Secrets / env-vars)
     SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL"))
     SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY"))
     OPENAI_KEY   = st.secrets.get("OPENAI_KEY",   os.getenv("OPENAI_KEY"))
@@ -29,9 +29,30 @@ missing = [n for n, v in {
 if missing:
     raise RuntimeError(
         f"Missing secrets: {', '.join(missing)} — "
-        "set them in config.py (local) or Streamlit Secrets (Cloud)"
+        "set them in config.py (local) or Streamlit Secrets (Cloud)."
     )
 # ╰────────────────────────────────────────────────────────╯
+
+# ── DEBUG block (remove when done) ───────────────────────
+if st.sidebar.checkbox("🔧 Show Supabase debug", key="dbg_toggle"):
+    import httpx, textwrap, json
+    masked = f"{SUPABASE_KEY[:4]}…{SUPABASE_KEY[-4:]}" if SUPABASE_KEY else "None"
+    st.write(":blue[**Supabase URL:**]", SUPABASE_URL)
+    st.write(":blue[**Anon key length:**]", len(SUPABASE_KEY))
+    st.write(":blue[**Anon key preview:**]", masked)
+
+    try:
+        ping = httpx.get(
+            SUPABASE_URL.rstrip("/") + "/rest/v1",
+            headers={"apikey": SUPABASE_KEY},
+            timeout=5,
+        )
+        st.write(":blue[**/rest/v1 status:**]", ping.status_code)
+        if ping.status_code == 401:
+            st.error("❌ 401 → key invalid or not anon key.")
+    except Exception as e:
+        st.error(f"Request failed: {e}")
+# ─────────────────────────────────────────────────────────
 
 # Clients
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -63,8 +84,10 @@ def save_transcript(vid: str, tr):
     ).execute()
 
 def profile(uid: str):
-    return (supabase.table("user_profile")
-            .select("*").eq("id", uid).single().execute()).data
+    return (
+        supabase.table("user_profile")
+        .select("*").eq("id", uid).single().execute()
+    ).data
 
 def bump_counter(uid: str):
     today = str(date.today())
@@ -93,30 +116,33 @@ if "user" not in st.session_state:
         email_s  = st.text_input("Email (sign-up)", key="signup_email")
         pw_s     = st.text_input("Password", type="password", key="signup_pw")
         if st.button("Create account", key="signup_btn"):
-            supabase.auth.sign_up(
-                dict(
-                    email=email_s,
-                    password=pw_s,
-                    options={"data": {"full_name": fullname}},
+            try:
+                supabase.auth.sign_up(
+                    dict(
+                        email=email_s,
+                        password=pw_s,
+                        options={"data": {"full_name": fullname}},
+                    )
                 )
-            )
-            st.success("Check your inbox to confirm e-mail.\nWait for admin approval.")
+                st.success("Check your inbox to confirm e-mail.\nWait for admin approval.")
+            except AuthApiError as err:
+                st.error(err.message)
     st.stop()
 
 # ── Approval gate ──────────────────────────────────────────
 user = st.session_state.user
 prof = profile(user.id)
 if not prof or not prof["approved"]:
-    st.warning("⏳  Awaiting admin approval…")
+    st.warning("⏳ Awaiting admin approval…")
     st.stop()
 
 # ── Main App ───────────────────────────────────────────────
 st.title("📺  YouTube Transcript App")
 mode = st.sidebar.radio("Mode", ("Downloader", "Chatbot"))
 
-# ▼────────────────── Downloader ────────────────────────────
+# ▼ Downloader ─────────────────────────────────────────────
 if mode == "Downloader":
-    st.header("📥  Download transcripts")
+    st.header("📥 Download transcripts")
     links_text = st.text_area("YouTube links (one per line)", key="link_input")
     if st.button("Fetch", key="fetch_btn"):
         for link in [l.strip() for l in links_text.splitlines() if l.strip()]:
@@ -131,17 +157,13 @@ if mode == "Downloader":
             else:
                 st.warning(f"{link} → no transcript")
 
-# ▼────────────────── Chatbot ───────────────────────────────
+# ▼ Chatbot ────────────────────────────────────────────────
 else:
     if not prof["can_chat"]:
-        st.info("🚫  Chatbot not enabled for your account.")
+        st.info("🚫 Chatbot not enabled for your account.")
         st.stop()
 
-    # daily quota ≤ 2
-    if (
-        prof["last_chat_date"] == str(date.today())
-        and prof["daily_chat_count"] >= 2
-    ):
+    if prof["last_chat_date"] == str(date.today()) and prof["daily_chat_count"] >= 2:
         st.warning("Daily quota (2 questions) reached. Come back tomorrow.")
         st.stop()
 
@@ -160,7 +182,7 @@ else:
         [f"{r['title']} ({r['video_id']})" for r in rows],
         key="video_select",
     )
-    vid = label.split("(")[-1][:-1]  # parse ID
+    vid = label.split("(")[-1][:-1]
 
     question = st.text_input("Ask your question", key="question_input")
     if question:
