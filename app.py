@@ -29,18 +29,22 @@ if missing:
 # ── DEBUG block (sidebar toggle) ──────────────────────────
 if st.sidebar.checkbox("🔧 Show Supabase debug", key="dbg_toggle"):
     preview = f"{SUPABASE_KEY[:4]}…{SUPABASE_KEY[-4:]}" if SUPABASE_KEY else "None"
-    st.write(":blue[Supabase URL]", SUPABASE_URL)
-    st.write(":blue[Anon key length]", len(SUPABASE_KEY or ''))
-    st.write(":blue[Anon key preview]", preview)
+    st.sidebar.write(":blue[Supabase URL]", SUPABASE_URL)
+    st.sidebar.write(":blue[Anon key length]", len(SUPABASE_KEY or ''))
+    st.sidebar.write(":blue[Anon key preview]", preview)
+
+    # show current user UUID if logged-in
+    if "user" in st.session_state:
+        st.sidebar.write(":blue[Logged-in user id]", st.session_state.user.id)
 
     try:
         ping = httpx.get(
             SUPABASE_URL.rstrip("/") + "/rest/v1",
             headers={"apikey": SUPABASE_KEY}, timeout=5
         )
-        st.write(":blue[/rest/v1 status]", ping.status_code)
+        st.sidebar.write(":blue[/rest/v1 status]", ping.status_code)
     except Exception as e:
-        st.error(f"Ping failed: {e}")
+        st.sidebar.error(f"Ping failed: {e}")
 
 # ── Clients ───────────────────────────────────────────────
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
