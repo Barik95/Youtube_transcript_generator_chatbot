@@ -86,7 +86,7 @@ if "user" not in st.session_state:
 
     with tab_login:
         email = st.text_input("Email", key="login_email")
-        pw    = st.text_input("Password", type="password", key="login_pw")
+        pw = st.text_input("Password", type="password", key="login_pw")
         if st.button("Login", key="login_btn"):
             if not email or not pw:
                 st.error("Email & password required")
@@ -95,10 +95,26 @@ if "user" not in st.session_state:
                     st.session_state.user = supabase.auth.sign_in_with_password(
                         {"email": email, "password": pw}
                     ).user
+                    st.success("✅ Login successful! Reloading app...")
                     st.rerun()
+
                 except AuthApiError as err:
+                    # Improved error catching
                     raw = getattr(err.__cause__, "response", None)
-                    st.error(raw.text if raw else err.message)
+
+                    if raw is not None:
+                        # Show full response from Supabase
+                        st.error(f"Auth error (from API): {raw.text}")
+                    else:
+                        # Fallback generic error
+                        st.error(f"Auth error: {err.message}")
+
+                except Exception as e:
+                    # Catch any other exceptions and show them
+                    import traceback
+                    st.error("Unexpected error during login.")
+                    st.text(traceback.format_exc())
+
 
     with tab_signup:
         fullname = st.text_input("Full name", key="signup_name")
